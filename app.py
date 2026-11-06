@@ -11,9 +11,16 @@ import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 import traceback
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=True)
+except ImportError:
+    pass
 
 # Local module imports
 from data_engine import (
@@ -261,6 +268,7 @@ def init_session_state():
         "ai_messages": [],
         "ai_provider": "gemini",
         "ai_model": "gemini-3.8-flash",
+        "gemini_api_key": os.environ.get("GEMINI_API_KEY", "").strip(),
         "selected_symbol": "BTC-USD",
         "selected_interval": "15m",
     }
@@ -425,20 +433,30 @@ def render_sidebar():
         sr_right = st.number_input("S&R Right Bars", value=5, min_value=2, max_value=20, key="sr_r")
 
         # ── AI Advisor (Fixed to Gemini 3.8 Flash) ──
-        st.markdown('<div class="sidebar-section-label">AI Advisor (Google Gemini 3.8)</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sidebar-section-label">AI Advisor (Gemini 3.8 Flash)</div>', unsafe_allow_html=True)
 
         st.session_state.ai_provider = "gemini"
         st.session_state.ai_model = "gemini-3.8-flash"
 
+        saved_key = os.environ.get("GEMINI_API_KEY", "").strip()
+        current_key = st.session_state.get("gemini_api_key") or saved_key
+
         api_key = st.text_input(
             "Gemini API Key",
-            value=st.session_state.get("gemini_api_key", ""),
+            value=current_key,
             type="password",
-            help="Paste your free Google Gemini API key here.",
+            help="Saved permanently in your .env file. You never need to paste it again.",
             key="gemini_key_input",
             placeholder="AIzaSy...",
         )
-        st.session_state["gemini_api_key"] = api_key
+        if api_key:
+            st.session_state["gemini_api_key"] = api_key
+            os.environ["GEMINI_API_KEY"] = api_key
+        elif saved_key:
+            st.session_state["gemini_api_key"] = saved_key
+
+        if saved_key or api_key:
+            st.caption("🔒 Key loaded permanently from `.env`")
 
         # ── Branding (Bottom Left) ──
         st.markdown(
