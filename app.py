@@ -437,12 +437,13 @@ def render_sidebar():
         )
         st.session_state.ai_provider = provider
 
-        model_defaults = {"gemini": "gemini-3.8-flash", "groq": "llama-3.3-70b-versatile", "ollama": "llama3.2"}
-        if st.session_state.get("_last_selected_provider") != provider or st.session_state.get("ai_model") == "gemini-2.0-flash":
-            st.session_state.ai_model = model_defaults.get(provider, "")
-            st.session_state._last_selected_provider = provider
-
-        ai_model = st.text_input("Model", value=st.session_state.ai_model, key="ai_mdl_input")
+        provider_models = {
+            "gemini": ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
+            "groq": ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
+            "ollama": ["llama3.2", "mistral", "llama3"],
+        }
+        models_for_prov = provider_models.get(provider, ["gemini-3.8-flash"])
+        ai_model = st.selectbox("Model", models_for_prov, key=f"{provider}_model_select")
         st.session_state.ai_model = ai_model
 
         api_key = ""
@@ -1255,8 +1256,15 @@ def tab_ai_advisor(params: dict):
     with col4:
         regime_btn = st.button("🌊 Market Regime", use_container_width=True, key="ai_regime")
 
+    # Show warning banner if API key is missing
+    current_key = st.session_state.get(f"{st.session_state.ai_provider}_api_key") or os.environ.get(f"{st.session_state.ai_provider.upper()}_API_KEY")
+    if st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+        st.warning(
+            f"⚠️ **{st.session_state.ai_provider.capitalize()} API Key is missing!** "
+            f"Paste your free API key into the **'{st.session_state.ai_provider.capitalize()} API Key'** box in the left sidebar."
+        )
+
     # Initialize advisor
-    current_key = st.session_state.get(f"{st.session_state.ai_provider}_api_key") or None
     try:
         advisor = AIAdvisor(
             provider=st.session_state.ai_provider,
@@ -1269,63 +1277,84 @@ def tab_ai_advisor(params: dict):
 
     # Handle quick actions
     if advisor:
-        if analyze_setup_btn and symbol in st.session_state.market_data:
-            df = st.session_state.market_data[symbol]
-            latest = df.iloc[-1]
-            setup = {
-                "symbol": symbol,
-                "price": float(latest["Close"]),
-                "trend_bias": str(latest.get("trend_bias", "N/A")),
-                "rsi": float(latest.get("RSI", 0)),
-                "rsi_mode": str(latest.get("rsi_mode", "N/A")),
-                "support": float(latest.get("support_level", 0)) if pd.notna(latest.get("support_level")) else None,
-                "resistance": float(latest.get("resistance_level", 0)) if pd.notna(latest.get("resistance_level")) else None,
-                "ma_fast": float(latest.get("MA_fast", 0)) if pd.notna(latest.get("MA_fast")) else None,
-                "ma_slow": float(latest.get("MA_slow", 0)) if pd.notna(latest.get("MA_slow")) else None,
-                "active_bull_fvg": bool(pd.notna(latest.get("active_bull_fvg_top"))),
-                "active_bear_fvg": bool(pd.notna(latest.get("active_bear_fvg_top"))),
-            }
-            with st.spinner("Analyzing setup..."):
-                response = advisor.analyze_setup(setup)
-                st.session_state.ai_messages.append({"role": "assistant", "content": response})
+        if analyze_setup_btn:
+            if symbol not in st.session_state.market_data:
+                st.warning(f"⚠️ Please click **Fetch** in the sidebar to load data for {symbol} first!")
+            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            else:
+                df = st.session_state.market_data[symbol]
+                latest = df.iloc[-1]
+                setup = {
+                    "symbol": symbol,
+                    "price": float(latest["Close"]),
+                    "trend_bias": str(latest.get("trend_bias", "N/A")),
+                    "rsi": float(latest.get("RSI", 0)),
+                    "rsi_mode": str(latest.get("rsi_mode", "N/A")),
+                    "support": float(latest.get("support_level", 0)) if pd.notna(latest.get("support_level")) else None,
+                    "resistance": float(latest.get("resistance_level", 0)) if pd.notna(latest.get("resistance_level")) else None,
+                    "ma_fast": float(latest.get("MA_fast", 0)) if pd.notna(latest.get("MA_fast")) else None,
+                    "ma_slow": float(latest.get("MA_slow", 0)) if pd.notna(latest.get("MA_slow")) else None,
+                    "active_bull_fvg": bool(pd.notna(latest.get("active_bull_fvg_top"))),
+                    "active_bear_fvg": bool(pd.notna(latest.get("active_bear_fvg_top"))),
+                }
+                with st.spinner("Analyzing setup..."):
+                    response = advisor.analyze_setup(setup)
+                    st.session_state.ai_messages.append({"role": "assistant", "content": response})
+                    st.rerun()
 
-        if critique_bt_btn and st.session_state.backtest_result:
-            with st.spinner("Critiquing backtest..."):
-                response = advisor.analyze_backtest(st.session_state.backtest_result.metrics)
-                st.session_state.ai_messages.append({"role": "assistant", "content": response})
+        if critique_bt_btn:
+            if not st.session_state.backtest_result:
+                st.warning("⚠️ Please run a backtest first in the **⚡ Backtester** tab before requesting an AI critique!")
+            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            else:
+                with st.spinner("Critiquing backtest..."):
+                    response = advisor.analyze_backtest(st.session_state.backtest_result.metrics)
+                    st.session_state.ai_messages.append({"role": "assistant", "content": response})
+                    st.rerun()
 
         if fund_opinion_btn:
             cat, _, _ = get_symbol_info(symbol)
-            if cat == "Stocks":
+            if cat != "Stocks":
+                st.warning(f"Fundamental analysis is only available for stocks, not {cat}.")
+            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            else:
                 with st.spinner("Analyzing fundamentals..."):
                     try:
                         card = get_fundamental_card(symbol)
                         response = advisor.analyze_fundamentals(card)
                         st.session_state.ai_messages.append({"role": "assistant", "content": response})
+                        st.rerun()
                     except Exception as e:
                         st.error(f"Error: {e}")
-            else:
-                st.warning(f"Fundamental analysis is only available for stocks, not {cat}.")
 
-        if regime_btn and symbol in st.session_state.market_data:
-            df = st.session_state.market_data[symbol]
-            recent = df.tail(100)
-            regime_data = {
-                "symbol": symbol,
-                "price_range_pct": float((recent["High"].max() - recent["Low"].min()) / recent["Close"].mean() * 100),
-                "avg_volume": float(recent["Volume"].mean()) if "Volume" in recent.columns else 0,
-                "trend_bias": str(df.iloc[-1].get("trend_bias", "N/A")),
-                "rsi": float(df.iloc[-1].get("RSI", 0)),
-                "volatility_20": float(recent["Close"].pct_change().std() * np.sqrt(252) * 100),
-                "bars_analyzed": len(recent),
-            }
-            with st.spinner("Analyzing market regime..."):
-                response = advisor.chat(
-                    f"Analyze the current market regime for {symbol}. "
-                    f"Is this a trending, ranging, or volatile market? What strategy adjustments do you recommend?",
-                    context=regime_data,
-                )
-                st.session_state.ai_messages.append({"role": "assistant", "content": response})
+        if regime_btn:
+            if symbol not in st.session_state.market_data:
+                st.warning(f"⚠️ Please fetch data for {symbol} first!")
+            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            else:
+                df = st.session_state.market_data[symbol]
+                recent = df.tail(100)
+                regime_data = {
+                    "symbol": symbol,
+                    "price_range_pct": float((recent["High"].max() - recent["Low"].min()) / recent["Close"].mean() * 100),
+                    "avg_volume": float(recent["Volume"].mean()) if "Volume" in recent.columns else 0,
+                    "trend_bias": str(df.iloc[-1].get("trend_bias", "N/A")),
+                    "rsi": float(df.iloc[-1].get("RSI", 0)),
+                    "volatility_20": float(recent["Close"].pct_change().std() * np.sqrt(252) * 100),
+                    "bars_analyzed": len(recent),
+                }
+                with st.spinner("Analyzing market regime..."):
+                    response = advisor.chat(
+                        f"Analyze the current market regime for {symbol}. "
+                        f"Is this a trending, ranging, or volatile market? What strategy adjustments do you recommend?",
+                        context=regime_data,
+                    )
+                    st.session_state.ai_messages.append({"role": "assistant", "content": response})
+                    st.rerun()
 
     # ── Chat Display ──
     st.markdown("---")
