@@ -259,8 +259,8 @@ def init_session_state():
         "calendar_df": None,
         "backtest_result": None,
         "ai_messages": [],
-        "ai_provider": "ollama",
-        "ai_model": "",
+        "ai_provider": "gemini",
+        "ai_model": "gemini-3.8-flash",
         "selected_symbol": "BTC-USD",
         "selected_interval": "15m",
     }
@@ -424,38 +424,21 @@ def render_sidebar():
         sr_left = st.number_input("S&R Left Bars", value=5, min_value=2, max_value=20, key="sr_l")
         sr_right = st.number_input("S&R Right Bars", value=5, min_value=2, max_value=20, key="sr_r")
 
-        # ── AI Provider ──
-        st.markdown('<div class="sidebar-section-label">AI Advisor</div>', unsafe_allow_html=True)
+        # ── AI Advisor (Fixed to Gemini 3.8 Flash) ──
+        st.markdown('<div class="sidebar-section-label">AI Advisor (Google Gemini 3.8)</div>', unsafe_allow_html=True)
 
-        available_providers = AIAdvisor.get_available_providers()
-        all_providers = ["ollama", "gemini", "groq"]
-        provider = st.selectbox(
-            "Provider",
-            all_providers,
-            format_func=lambda p: f"{'✅' if p in available_providers else '⚠️'} {p.capitalize()}",
-            key="ai_prov",
+        st.session_state.ai_provider = "gemini"
+        st.session_state.ai_model = "gemini-3.8-flash"
+
+        api_key = st.text_input(
+            "Gemini API Key",
+            value=st.session_state.get("gemini_api_key", ""),
+            type="password",
+            help="Paste your free Google Gemini API key here.",
+            key="gemini_key_input",
+            placeholder="AIzaSy...",
         )
-        st.session_state.ai_provider = provider
-
-        provider_models = {
-            "gemini": ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-1.5-pro"],
-            "groq": ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
-            "ollama": ["llama3.2", "mistral", "llama3"],
-        }
-        models_for_prov = provider_models.get(provider, ["gemini-3.8-flash"])
-        ai_model = st.selectbox("Model", models_for_prov, key=f"{provider}_model_select")
-        st.session_state.ai_model = ai_model
-
-        api_key = ""
-        if provider in ["gemini", "groq"]:
-            api_key = st.text_input(
-                f"{provider.capitalize()} API Key",
-                value=st.session_state.get(f"{provider}_api_key", ""),
-                type="password",
-                help="Paste your free API key here, or put it in your .env file.",
-                key=f"{provider}_key_input",
-            )
-            st.session_state[f"{provider}_api_key"] = api_key
+        st.session_state["gemini_api_key"] = api_key
 
         # ── Branding (Bottom Left) ──
         st.markdown(
@@ -1236,8 +1219,7 @@ def tab_ai_advisor(params: dict):
     """AI advisor chat interface."""
     st.markdown(
         "<div class='frost-panel'><h3>🤖 NEXUS-QUANT AI Advisor</h3>"
-        f"Provider: <strong style='color:#E2F952;'>{st.session_state.ai_provider.capitalize()}</strong> · "
-        f"Model: <strong style='color:#38BDF8;'>{st.session_state.ai_model or 'Default'}</strong>"
+        "AI Engine: <strong style='color:#E2F952;'>Google Gemini 3.8 Flash</strong> · Vision & Multi-Screenshot Analysis"
         "</div>",
         unsafe_allow_html=True,
     )
@@ -1257,18 +1239,18 @@ def tab_ai_advisor(params: dict):
         regime_btn = st.button("🌊 Market Regime", use_container_width=True, key="ai_regime")
 
     # Show warning banner if API key is missing
-    current_key = st.session_state.get(f"{st.session_state.ai_provider}_api_key") or os.environ.get(f"{st.session_state.ai_provider.upper()}_API_KEY")
-    if st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
+    current_key = st.session_state.get("gemini_api_key") or os.environ.get("GEMINI_API_KEY")
+    if not current_key:
         st.warning(
-            f"⚠️ **{st.session_state.ai_provider.capitalize()} API Key is missing!** "
-            f"Paste your free API key into the **'{st.session_state.ai_provider.capitalize()} API Key'** box in the left sidebar."
+            "⚠️ **Gemini API Key is missing!** "
+            "Please paste your free Google Gemini API key into the **'Gemini API Key'** box in the left sidebar."
         )
 
     # Initialize advisor
     try:
         advisor = AIAdvisor(
-            provider=st.session_state.ai_provider,
-            model=st.session_state.ai_model or None,
+            provider="gemini",
+            model="gemini-3.8-flash",
             api_key=current_key,
         )
     except Exception as e:
@@ -1280,8 +1262,8 @@ def tab_ai_advisor(params: dict):
         if analyze_setup_btn:
             if symbol not in st.session_state.market_data:
                 st.warning(f"⚠️ Please click **Fetch** in the sidebar to load data for {symbol} first!")
-            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
-                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            elif not current_key:
+                st.error("❌ Please paste your Gemini API key in the sidebar first!")
             else:
                 df = st.session_state.market_data[symbol]
                 latest = df.iloc[-1]
@@ -1306,8 +1288,8 @@ def tab_ai_advisor(params: dict):
         if critique_bt_btn:
             if not st.session_state.backtest_result:
                 st.warning("⚠️ Please run a backtest first in the **⚡ Backtester** tab before requesting an AI critique!")
-            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
-                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            elif not current_key:
+                st.error("❌ Please paste your Gemini API key in the sidebar first!")
             else:
                 with st.spinner("Critiquing backtest..."):
                     response = advisor.analyze_backtest(st.session_state.backtest_result.metrics)
@@ -1318,8 +1300,8 @@ def tab_ai_advisor(params: dict):
             cat, _, _ = get_symbol_info(symbol)
             if cat != "Stocks":
                 st.warning(f"Fundamental analysis is only available for stocks, not {cat}.")
-            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
-                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            elif not current_key:
+                st.error("❌ Please paste your Gemini API key in the sidebar first!")
             else:
                 with st.spinner("Analyzing fundamentals..."):
                     try:
@@ -1333,8 +1315,8 @@ def tab_ai_advisor(params: dict):
         if regime_btn:
             if symbol not in st.session_state.market_data:
                 st.warning(f"⚠️ Please fetch data for {symbol} first!")
-            elif st.session_state.ai_provider in ["gemini", "groq"] and not current_key:
-                st.error(f"❌ Please paste your {st.session_state.ai_provider.capitalize()} API key in the sidebar first!")
+            elif not current_key:
+                st.error("❌ Please paste your Gemini API key in the sidebar first!")
             else:
                 df = st.session_state.market_data[symbol]
                 recent = df.tail(100)
