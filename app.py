@@ -607,16 +607,21 @@ def render_candlestick_chart(df: pd.DataFrame, symbol: str, show_fvg: bool = Tru
 
     # ── Fair Value Gaps (shaded rectangles) ──
     if show_fvg and "fvg_type" in df.columns:
-        fvg_rows = df[df["fvg_type"].notna()]
+        fvg_rows = df[df["fvg_type"].notna()].tail(30)
+        bar_delta = (df.index[1] - df.index[0]) * 6 if len(df) > 1 else pd.Timedelta(hours=2)
         for idx, row in fvg_rows.iterrows():
-            color = "rgba(34,197,94,0.12)" if row["fvg_type"] == "BULLISH_FVG" else "rgba(239,68,68,0.12)"
-            border_color = "rgba(34,197,94,0.4)" if row["fvg_type"] == "BULLISH_FVG" else "rgba(239,68,68,0.4)"
+            fvg_top = row.get("fvg_top", 0)
+            fvg_bot = row.get("fvg_bottom", 0)
+            if pd.isna(fvg_top) or pd.isna(fvg_bot) or fvg_top == 0 or fvg_bot == 0:
+                continue
+            color = "rgba(34,197,94,0.18)" if row["fvg_type"] == "BULLISH_FVG" else "rgba(239,68,68,0.18)"
+            border_color = "rgba(34,197,94,0.5)" if row["fvg_type"] == "BULLISH_FVG" else "rgba(239,68,68,0.5)"
             fig.add_shape(
                 type="rect",
                 x0=idx,
-                x1=idx + pd.Timedelta(hours=4) if hasattr(idx, "hour") else idx,
-                y0=row.get("fvg_bottom", 0),
-                y1=row.get("fvg_top", 0),
+                x1=idx + bar_delta,
+                y0=fvg_bot,
+                y1=fvg_top,
                 fillcolor=color,
                 line=dict(color=border_color, width=1),
                 row=1,
@@ -825,12 +830,25 @@ def tab_market_analysis(params: dict):
         date_range = f"{df.index[0].strftime('%Y-%m-%d')} → {df.index[-1].strftime('%Y-%m-%d')}"
         st.markdown(f"<div class='frost-panel'><h3>📊 Data</h3>{bars_count} bars<br>{date_range}</div>", unsafe_allow_html=True)
 
-    # ── Chart ──
-    show_fvg = st.checkbox("Show FVG Zones", value=True, key="show_fvg")
+    # ── Chart Controls ──
+    col_fvg, col_range = st.columns([1, 2])
+    with col_fvg:
+        show_fvg = st.checkbox("Show FVG Zones", value=True, key="show_fvg")
+    with col_range:
+        display_bars = st.select_slider(
+            "Visible Bars on Chart",
+            options=[100, 200, 300, 500, 1000, "All"],
+            value=200,
+            key="visible_bars",
+            help="Showing recent bars makes the chart load instantly.",
+        )
+
+    chart_df = df if display_bars == "All" else df.tail(display_bars)
+
     trades_to_show = None
     if st.session_state.backtest_result:
         trades_to_show = st.session_state.backtest_result.trades
-    render_candlestick_chart(df, symbol, show_fvg=show_fvg, trades=trades_to_show)
+    render_candlestick_chart(chart_df, symbol, show_fvg=show_fvg, trades=trades_to_show)
 
     # ── Raw Data ──
     with st.expander("📋 Raw Data (last 50 bars)"):
