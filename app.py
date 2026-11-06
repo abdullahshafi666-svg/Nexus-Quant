@@ -438,7 +438,11 @@ def render_sidebar():
         st.session_state.ai_provider = provider
 
         model_defaults = {"gemini": "gemini-2.0-flash", "groq": "llama-3.3-70b-versatile", "ollama": "llama3.2"}
-        ai_model = st.text_input("Model", value=model_defaults.get(provider, ""), key="ai_mdl")
+        if st.session_state.get("_last_selected_provider") != provider:
+            st.session_state.ai_model = model_defaults.get(provider, "")
+            st.session_state._last_selected_provider = provider
+
+        ai_model = st.text_input("Model", value=st.session_state.ai_model, key="ai_mdl_input")
         st.session_state.ai_model = ai_model
 
         api_key = ""
@@ -740,11 +744,14 @@ def render_equity_curve(equity_curve: pd.Series, initial_capital: float):
             fillcolor="rgba(239,68,68,0.15)",
             line=dict(color="#EF4444", width=1.5),
             name="Drawdown %",
+            hovertemplate="Drawdown: %{y:.2f}%<extra></extra>",
         ),
         row=2, col=1,
     )
 
-    fig.update_layout(**PLOTLY_LAYOUT, height=420, showlegend=True)
+    fig.update_layout(**PLOTLY_LAYOUT, height=450, showlegend=True)
+    fig.update_yaxes(title_text="Equity ($)", tickformat="$,.0f", row=1, col=1)
+    fig.update_yaxes(title_text="Drawdown (%)", tickformat=".2f", ticksuffix="%", row=2, col=1)
     st.plotly_chart(fig, use_container_width=True)
 
 
@@ -975,22 +982,46 @@ def tab_backtester(params: dict):
         render_equity_curve(result.equity_curve, params["capital"])
 
     # ── Trade Log ──
-    with st.expander(f"📋 Trade Log ({len(result.trades)} trades)"):
+    with st.expander(f"📋 Trade Log ({len(result.trades)} trades)", expanded=True):
         if result.trades:
+            # Trade outcome counts
+            tp_count = sum(1 for t in result.trades if t.status == "CLOSED_TP")
+            sl_count = sum(1 for t in result.trades if t.status == "CLOSED_SL")
+            be_count = sum(1 for t in result.trades if t.status == "CLOSED_BE")
+
+            st.markdown(
+                f"""
+                <div style="display: flex; gap: 20px; margin-bottom: 14px; font-size: 0.92rem; background: rgba(20,22,26,0.5); padding: 10px 14px; border-radius: 8px; border: 1px solid #272A30;">
+                    <span style="color: #22C55E; font-weight: 700;">🎯 Hit Take Profit (TP): {tp_count}</span>
+                    <span style="color: #EF4444; font-weight: 700;">🛑 Hit Stop Loss (SL): {sl_count}</span>
+                    <span style="color: #38BDF8; font-weight: 700;">🛡️ Saved at Breakeven (BE): {be_count}</span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
             trade_data = []
             for t in result.trades:
+                outcome_label = "⏳ Open"
+                if t.status == "CLOSED_TP":
+                    outcome_label = "🎯 HIT TP"
+                elif t.status == "CLOSED_SL":
+                    outcome_label = "🛑 HIT SL"
+                elif t.status == "CLOSED_BE":
+                    outcome_label = "🛡️ HIT BE"
+
                 trade_data.append({
-                    "Entry Time": t.entry_time,
-                    "Direction": t.direction,
+                    "Outcome": outcome_label,
+                    "Direction": "🟢 LONG" if t.direction == "LONG" else "🔴 SHORT",
+                    "Entry Time": str(t.entry_time)[:16],
                     "Entry": f"{t.entry_price:.4f}" if t.entry_price < 100 else f"{t.entry_price:.2f}",
                     "SL": f"{t.stop_loss:.4f}" if t.stop_loss < 100 else f"{t.stop_loss:.2f}",
                     "TP": f"{t.take_profit:.4f}" if t.take_profit < 100 else f"{t.take_profit:.2f}",
                     "Exit": f"{t.exit_price:.4f}" if t.exit_price and t.exit_price < 100 else (f"{t.exit_price:.2f}" if t.exit_price else "OPEN"),
-                    "Status": t.status,
-                    "PnL": f"${t.pnl:+,.2f}",
-                    "RR": f"{t.rr_achieved:.2f}",
-                    "BE": "✓" if t.be_triggered else "",
-                    "Bars": t.bars_held,
+                    "PnL ($)": f"${t.pnl:+,.2f}",
+                    "RR Achieved": f"{t.rr_achieved:.2f}R",
+                    "Trailed to BE?": "✅ Trailed" if t.be_triggered else "No",
+                    "Bars Held": t.bars_held,
                 })
             st.dataframe(pd.DataFrame(trade_data), use_container_width=True)
         else:
@@ -1280,27 +1311,80 @@ def tab_ai_advisor(params: dict):
                     unsafe_allow_html=True,
                 )
 
-    # ── Screenshot / Chart Image Uploader ──
+    # ── Screenshots & Trade Library (Local Folder & Multi-Upload) ──
     pil_images = []
-    with st.expander("📸 Upload Screenshots or Charts for Vision AI", expanded=False):
-        uploaded_files = st.file_uploader(
-            "Upload one or multiple chart screenshots (PNG, JPG)",
-            type=["png", "jpg", "jpeg"],
-            accept_multiple_files=True,
-            key="advisor_image_uploader",
-            help="Gemini 2.0 will directly read and analyze the charts, candles, and data in your images.",
-        )
-        if uploaded_files:
-            from PIL import Image
-            cols = st.columns(min(len(uploaded_files), 4))
-            for i, f in enumerate(uploaded_files):
-                try:
-                    img = Image.open(f)
-                    pil_images.append(img)
-                    with cols[i % 4]:
-                        st.image(img, caption=f"Screenshot {i+1}", use_container_width=True)
-                except Exception as img_err:
-                    st.warning(f"Could not load image {f.name}: {img_err}")
+    with st.expander("📁 Trade Screenshots Library (Folder & Multi-Upload)", expanded=False):
+        mode = st.radio("Source Mode", ["📂 Local Folder (300+ Trade Screenshots)", "📤 Manual File Upload"], horizontal=True, key="sc_mode")
+
+        if mode == "📂 Local Folder (300+ Trade Screenshots)":
+            st.markdown("<p style='color: #6B7280; font-size: 0.85rem;'>Point to any folder on your laptop containing your trade screenshots. NEXUS-QUANT AI will scan and inspect them directly.</p>", unsafe_allow_html=True)
+            folder_path = st.text_input(
+                "Enter Folder Path on Your PC",
+                value=st.session_state.get("trade_folder_path", ""),
+                placeholder="e.g. C:\\Users\\Abdullah\\Pictures\\Trades or C:\\Users\\Abdullah\\Downloads\\trades",
+                key="folder_path_input"
+            )
+            st.session_state["trade_folder_path"] = folder_path
+
+            if folder_path and Path(folder_path).is_dir():
+                valid_exts = {".png", ".jpg", ".jpeg", ".webp"}
+                folder_images = [p for p in Path(folder_path).iterdir() if p.suffix.lower() in valid_exts]
+                folder_images.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+
+                st.success(f"✓ Found {len(folder_images)} trade screenshots in folder!")
+
+                if folder_images:
+                    col_sel, col_action = st.columns([2, 1])
+                    with col_sel:
+                        selected_idx = st.slider("Browse Screenshot Index", 1, len(folder_images), 1, key="img_slider")
+                        chosen_path = folder_images[selected_idx - 1]
+                        st.caption(f"Viewing: `{chosen_path.name}` ({selected_idx} of {len(folder_images)})")
+                        from PIL import Image
+                        try:
+                            preview_img = Image.open(chosen_path)
+                            pil_images.append(preview_img)
+                            st.image(preview_img, caption=chosen_path.name, use_container_width=True)
+                        except Exception as e:
+                            st.error(f"Error loading image: {e}")
+
+                    with col_action:
+                        st.markdown("<div style='padding-top: 30px;'></div>", unsafe_allow_html=True)
+                        if st.button("🔍 AI Review This Trade", use_container_width=True, key="review_sc_btn"):
+                            if advisor:
+                                with st.spinner(f"Analyzing {chosen_path.name}..."):
+                                    prompt = (
+                                        f"Please analyze this trade screenshot ({chosen_path.name}). "
+                                        "1. Identify the setup (Support/Resistance, Trend, Fair Value Gaps, or Reversal candle). "
+                                        "2. Did this trade execute properly based on risk management? "
+                                        "3. Critique the entry, Stop Loss, and Take Profit levels shown in this picture."
+                                    )
+                                    resp = advisor.chat(prompt, images=[preview_img])
+                                    st.session_state.ai_messages.append({"role": "user", "content": f"Uploaded trade screenshot: `{chosen_path.name}`"})
+                                    st.session_state.ai_messages.append({"role": "assistant", "content": resp})
+                                    st.rerun()
+
+            elif folder_path:
+                st.warning(f"Folder not found: `{folder_path}`. Please verify the exact folder path.")
+
+        else:
+            uploaded_files = st.file_uploader(
+                "Upload chart screenshots (PNG, JPG)",
+                type=["png", "jpg", "jpeg"],
+                accept_multiple_files=True,
+                key="advisor_image_uploader",
+                help="Gemini 2.0 will directly read and analyze the charts, candles, and data in your images.",
+            )
+            if uploaded_files:
+                from PIL import Image
+                cols = st.columns(min(len(uploaded_files), 4))
+                for i, f in enumerate(uploaded_files):
+                    try:
+                        img = Image.open(f)
+                        pil_images.append(img)
+                        with cols[i % 4]:
+                            st.image(img, caption=f"Screenshot {i+1}", use_container_width=True)
+                    except Exception as img_err:
+                        st.warning(f"Could not load image {f.name}: {img_err}")
 
     # ── Chat Input ──
     user_input = st.chat_input("Ask NEXUS-QUANT AI anything about the markets (or your uploaded screenshots)...", key="ai_chat_input")

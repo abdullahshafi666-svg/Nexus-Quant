@@ -185,9 +185,21 @@ class AIAdvisor:
         if _genai is None:
             return "[ERROR] google-generativeai is not installed."
 
+        if not self.api_key:
+            return (
+                "[ERROR] Gemini API key is missing. "
+                "Please enter your free Gemini API key in the sidebar under 'AI Advisor' (or in your .env file)."
+            )
+
         try:
             _genai.configure(api_key=self.api_key)
-            model = _genai.GenerativeModel(self.model)
+
+            # Auto-correct model name if previous provider model was kept in UI
+            gemini_model = self.model
+            if not gemini_model or "llama" in gemini_model.lower():
+                gemini_model = "gemini-2.0-flash"
+
+            model = _genai.GenerativeModel(gemini_model)
 
             # Gemini expects a single prompt string or a list of content parts.
             # Concatenate messages into a single prompt.
@@ -235,14 +247,23 @@ class AIAdvisor:
         if _Groq is None:
             return "[ERROR] groq package is not installed."
 
+        if not self.api_key:
+            return (
+                "[ERROR] Groq API key is missing. "
+                "Please enter your free Groq API key in the sidebar under 'AI Advisor' (or in your .env file)."
+            )
+
         try:
             client = _Groq(api_key=self.api_key)
+            groq_model = self.model
+            if not groq_model or "gemini" in groq_model.lower():
+                groq_model = "llama-3.3-70b-versatile"
 
             max_retries = 3
             for attempt in range(max_retries):
                 try:
                     response = client.chat.completions.create(
-                        model=self.model,
+                        model=groq_model,
                         messages=messages,
                     )
                     return response.choices[0].message.content
