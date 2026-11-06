@@ -57,7 +57,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MODELS: dict[str, str] = {
-    "gemini": "gemini-2.0-flash",
+    "gemini": "gemini-3.8-flash",
     "groq": "llama-3.3-70b-versatile",
     "ollama": "llama3.2",
 }
@@ -194,15 +194,12 @@ class AIAdvisor:
         try:
             _genai.configure(api_key=self.api_key)
 
-            # Auto-correct model name if previous provider model was kept in UI
+            # Auto-correct model name if previous provider model or deprecated model was passed
             gemini_model = self.model
-            if not gemini_model or "llama" in gemini_model.lower():
-                gemini_model = "gemini-2.0-flash"
-
-            model = _genai.GenerativeModel(gemini_model)
+            if not gemini_model or "llama" in gemini_model.lower() or "gemini-2.0" in gemini_model.lower():
+                gemini_model = "gemini-3.8-flash"
 
             # Gemini expects a single prompt string or a list of content parts.
-            # Concatenate messages into a single prompt.
             prompt_parts: list[str] = []
             for msg in messages:
                 role = msg.get("role", "user")
@@ -222,21 +219,37 @@ class AIAdvisor:
                     if img is not None:
                         payload.append(img)
 
-            max_retries = 3
-            for attempt in range(max_retries):
-                try:
-                    response = model.generate_content(payload)
-                    return response.text
-                except Exception as exc:
-                    err_str = str(exc).lower()
-                    if "rate" in err_str or "429" in err_str or "quota" in err_str:
-                        wait = 2 ** (attempt + 1)
-                        logger.warning("Gemini rate-limited, retrying in %ds …", wait)
-                        time.sleep(wait)
-                        continue
-                    raise
+            # Candidates with automatic fallback if one model is retired
+            candidates = [gemini_model]
+            for alt in ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
+                if alt not in candidates:
+                    candidates.append(alt)
 
-            return "[ERROR] Gemini: rate limit exceeded after retries."
+            last_error = None
+            for cand in candidates:
+                try:
+                    model = _genai.GenerativeModel(cand)
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            response = model.generate_content(payload)
+                            return response.text
+                        except Exception as exc:
+                            err_str = str(exc).lower()
+                            if "rate" in err_str or "429" in err_str or "quota" in err_str:
+                                wait = 2 ** (attempt + 1)
+                                logger.warning("Gemini rate-limited, retrying in %ds …", wait)
+                                time.sleep(wait)
+                                continue
+                            raise
+                except Exception as exc:
+                    last_error = exc
+                    if "404" in str(exc) or "not found" in str(exc).lower():
+                        continue  # Try next available candidate model
+                    logger.error("Gemini call failed on %s: %s", cand, exc)
+                    return f"[ERROR] Gemini API error: {exc}"
+
+            return f"[ERROR] Gemini model error: {last_error}"
 
         except Exception as exc:
             logger.error("Gemini call failed: %s", exc)

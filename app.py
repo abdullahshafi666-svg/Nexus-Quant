@@ -437,8 +437,8 @@ def render_sidebar():
         )
         st.session_state.ai_provider = provider
 
-        model_defaults = {"gemini": "gemini-2.0-flash", "groq": "llama-3.3-70b-versatile", "ollama": "llama3.2"}
-        if st.session_state.get("_last_selected_provider") != provider:
+        model_defaults = {"gemini": "gemini-3.8-flash", "groq": "llama-3.3-70b-versatile", "ollama": "llama3.2"}
+        if st.session_state.get("_last_selected_provider") != provider or st.session_state.get("ai_model") == "gemini-2.0-flash":
             st.session_state.ai_model = model_defaults.get(provider, "")
             st.session_state._last_selected_provider = provider
 
@@ -981,6 +981,42 @@ def tab_backtester(params: dict):
     if result.equity_curve is not None and len(result.equity_curve) > 0:
         render_equity_curve(result.equity_curve, params["capital"])
 
+    # ── Strategy & Setup Success Breakdown ──
+    setup_data = metrics.get("setup_breakdown", {})
+    trigger_data = metrics.get("trigger_breakdown", {})
+
+    if setup_data or trigger_data:
+        st.markdown("<div class='frost-panel'><h3>🎯 Success Rate by Setup (S&R vs. FVG vs. Reversals)</h3></div>", unsafe_allow_html=True)
+        col_s, col_t = st.columns(2)
+
+        with col_s:
+            st.markdown("#### 📍 Location Setup (S&R vs. FVG)")
+            if setup_data:
+                s_rows = []
+                for stype, d in setup_data.items():
+                    s_rows.append({
+                        "Setup": stype,
+                        "Trades": d.get("trades", 0),
+                        "Win Rate": f"{d.get('win_rate_pct', 0):.1f}%",
+                        "Wins / Losses": f"{d.get('wins', 0)}W / {d.get('losses', 0)}L",
+                        "Net PnL": f"${d.get('pnl', 0):+,.2f}",
+                    })
+                st.dataframe(pd.DataFrame(s_rows), use_container_width=True)
+
+        with col_t:
+            st.markdown("#### ⚡ Trigger Mode (Reversal vs. Breakout)")
+            if trigger_data:
+                t_rows = []
+                for tmode, d in trigger_data.items():
+                    t_rows.append({
+                        "Trigger Mode": tmode,
+                        "Trades": d.get("trades", 0),
+                        "Win Rate": f"{d.get('win_rate_pct', 0):.1f}%",
+                        "Wins / Losses": f"{d.get('wins', 0)}W / {d.get('losses', 0)}L",
+                        "Net PnL": f"${d.get('pnl', 0):+,.2f}",
+                    })
+                st.dataframe(pd.DataFrame(t_rows), use_container_width=True)
+
     # ── Trade Log ──
     with st.expander(f"📋 Trade Log ({len(result.trades)} trades)", expanded=True):
         if result.trades:
@@ -1012,6 +1048,7 @@ def tab_backtester(params: dict):
 
                 trade_data.append({
                     "Outcome": outcome_label,
+                    "Setup Trigger": f"{getattr(t, 'setup_type', 'S&R Bounce')} · {getattr(t, 'trigger_mode', 'Reversal')}",
                     "Direction": "🟢 LONG" if t.direction == "LONG" else "🔴 SHORT",
                     "Entry Time": str(t.entry_time)[:16],
                     "Entry": f"{t.entry_price:.4f}" if t.entry_price < 100 else f"{t.entry_price:.2f}",

@@ -45,6 +45,8 @@ class Trade:
     take_profit: float
     position_size: float
     status: str = "OPEN"                 # OPEN | CLOSED_TP | CLOSED_SL | CLOSED_BE
+    setup_type: str = "S&R Bounce"       # S&R Bounce | FVG Retest | S&R + FVG Confluence
+    trigger_mode: str = "Reversal"       # RSI Reversal | Momentum Breakout
     exit_time: Optional[pd.Timestamp] = None
     exit_price: Optional[float] = None
     pnl: float = 0.0
@@ -145,7 +147,17 @@ class BacktestEngine:
                 if risk <= 0:
                     return None
                 tp_price = entry_price + risk * self.params.tp_rr_ratio
-                return ("LONG", entry_price, sl_price, tp_price)
+
+                if near_support and in_bull_fvg:
+                    setup_type = "S&R + FVG Confluence"
+                elif near_support:
+                    setup_type = "S&R Bounce"
+                else:
+                    setup_type = "FVG Retest"
+
+                trigger_mode = "RSI Reversal" if rsi_mode == "REVERSAL_LONG" else "Momentum Breakout"
+
+                return ("LONG", entry_price, sl_price, tp_price, setup_type, trigger_mode)
 
         # ----- SHORT -------------------------------------------------
         if trend_bias == "SHORT" and not np.isnan(resistance):
@@ -170,7 +182,17 @@ class BacktestEngine:
                 if risk <= 0:
                     return None
                 tp_price = entry_price - risk * self.params.tp_rr_ratio
-                return ("SHORT", entry_price, sl_price, tp_price)
+
+                if near_resistance and in_bear_fvg:
+                    setup_type = "S&R + FVG Confluence"
+                elif near_resistance:
+                    setup_type = "S&R Bounce"
+                else:
+                    setup_type = "FVG Retest"
+
+                trigger_mode = "RSI Reversal" if rsi_mode == "REVERSAL_SHORT" else "Momentum Breakout"
+
+                return ("SHORT", entry_price, sl_price, tp_price, setup_type, trigger_mode)
 
         return None
 
@@ -389,7 +411,7 @@ class BacktestEngine:
                 if not self._is_news_blackout(bar_time, news_blackout_times):
                     signal = self._check_entry_signal(df, i)
                     if signal is not None:
-                        direction, entry_px, sl_px, tp_px = signal
+                        direction, entry_px, sl_px, tp_px, setup_type, trigger_mode = signal
                         size = self._calculate_position_size(
                             capital, entry_px, sl_px, self.params.risk_per_trade_pct
                         )
@@ -401,6 +423,8 @@ class BacktestEngine:
                                 stop_loss=sl_px,
                                 take_profit=tp_px,
                                 position_size=size,
+                                setup_type=setup_type,
+                                trigger_mode=trigger_mode,
                             )
 
             # --- Record equity -----------------------------------------------
@@ -560,5 +584,43 @@ class BacktestEngine:
         # Round values
         monthly_returns = {k: round(v, 4) for k, v in sorted(monthly_returns.items())}
         metrics["monthly_returns"] = monthly_returns
+
+        # Setup breakdown (S&R vs FVG vs Confluence) -------------------------
+        setup_breakdown: Dict[str, Dict[str, object]] = {}
+        for t in trades:
+            stype = getattr(t, "setup_type", "S&R Bounce")
+            if stype not in setup_breakdown:
+                setup_breakdown[stype] = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+            setup_breakdown[stype]["trades"] += 1
+            if t.pnl > 0:
+                setup_breakdown[stype]["wins"] += 1
+            else:
+                setup_breakdown[stype]["losses"] += 1
+            setup_breakdown[stype]["pnl"] += t.pnl
+
+        for stype, d in setup_breakdown.items():
+            cnt = d["trades"]
+            d["win_rate_pct"] = round(d["wins"] / cnt * 100.0, 1) if cnt > 0 else 0.0
+            d["pnl"] = round(d["pnl"], 2)
+        metrics["setup_breakdown"] = setup_breakdown
+
+        # Trigger mode breakdown (RSI Reversal Rejection vs Momentum Breakout)
+        trigger_breakdown: Dict[str, Dict[str, object]] = {}
+        for t in trades:
+            tmode = getattr(t, "trigger_mode", "RSI Reversal")
+            if tmode not in trigger_breakdown:
+                trigger_breakdown[tmode] = {"trades": 0, "wins": 0, "losses": 0, "pnl": 0.0}
+            trigger_breakdown[tmode]["trades"] += 1
+            if t.pnl > 0:
+                trigger_breakdown[tmode]["wins"] += 1
+            else:
+                trigger_breakdown[tmode]["losses"] += 1
+            trigger_breakdown[tmode]["pnl"] += t.pnl
+
+        for tmode, d in trigger_breakdown.items():
+            cnt = d["trades"]
+            d["win_rate_pct"] = round(d["wins"] / cnt * 100.0, 1) if cnt > 0 else 0.0
+            d["pnl"] = round(d["pnl"], 2)
+        metrics["trigger_breakdown"] = trigger_breakdown
 
         return metrics
