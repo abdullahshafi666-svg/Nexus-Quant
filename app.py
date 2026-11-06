@@ -1359,6 +1359,12 @@ def tab_ai_advisor(params: dict):
     # ── Chat Display ──
     st.markdown("---")
 
+    # Clean out any old stale errors from prior sessions
+    st.session_state.ai_messages = [
+        m for m in st.session_state.ai_messages
+        if not (isinstance(m.get("content"), str) and "[ERROR]" in m.get("content") and ("None" in m.get("content") or "Ollama" in m.get("content") or "2.0-flash" in m.get("content")))
+    ]
+
     chat_container = st.container()
     with chat_container:
         for msg in st.session_state.ai_messages:

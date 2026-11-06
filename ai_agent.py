@@ -238,13 +238,20 @@ class AIAdvisor:
                         payload,
                         request_options={"timeout": timeout_val}
                     )
-                    if response and response.text:
-                        return response.text
+                    if response:
+                        try:
+                            if response.text and response.text.strip():
+                                return response.text
+                        except Exception as text_err:
+                            last_error = text_err
+                            continue
                 except Exception as exc:
                     last_error = exc
                     logger.warning("Gemini candidate %s failed (%s), trying fast fallback...", cand, exc)
                     continue
 
+            if last_error is None:
+                last_error = "Model did not return text response. Please verify your connection."
             return f"[ERROR] Gemini API request failed: {last_error}"
 
         except Exception as exc:
