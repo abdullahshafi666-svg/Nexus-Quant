@@ -1309,7 +1309,7 @@ def tab_ai_advisor(params: dict):
             elif not current_key:
                 st.error("❌ Please paste your Gemini API key in the sidebar first!")
             else:
-                with st.spinner("Critiquing backtest..."):
+                with st.spinner("⚡ NEXUS-QUANT AI is analyzing backtest (~2-3 seconds)..."):
                     response = advisor.analyze_backtest(st.session_state.backtest_result.metrics)
                     st.session_state.ai_messages.append({"role": "assistant", "content": response})
                     st.rerun()

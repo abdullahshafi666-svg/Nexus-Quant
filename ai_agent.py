@@ -57,7 +57,7 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _DEFAULT_MODELS: dict[str, str] = {
-    "gemini": "gemini-3.8-flash",
+    "gemini": "gemini-3.5-flash-lite",
     "groq": "llama-3.3-70b-versatile",
     "ollama": "llama3.2",
 }
@@ -111,7 +111,7 @@ class AIAdvisor:
 
     def __init__(
         self,
-        provider: str = "ollama",
+        provider: str = "gemini",
         model: str | None = None,
         api_key: str | None = None,
     ) -> None:
@@ -197,7 +197,7 @@ class AIAdvisor:
             # Auto-correct model name if previous provider model or deprecated model was passed
             gemini_model = self.model
             if not gemini_model or "llama" in gemini_model.lower() or "gemini-2.0" in gemini_model.lower():
-                gemini_model = "gemini-3.8-flash"
+                gemini_model = "gemini-3.5-flash-lite"
 
             # Gemini expects a single prompt string or a list of content parts.
             prompt_parts: list[str] = []
@@ -219,37 +219,33 @@ class AIAdvisor:
                     if img is not None:
                         payload.append(img)
 
-            # Candidates with automatic fallback if one model is retired
-            candidates = [gemini_model]
-            for alt in ["gemini-3.8-flash", "gemini-1.5-flash", "gemini-1.5-pro"]:
-                if alt not in candidates:
-                    candidates.append(alt)
+            # Fast candidate list:
+            # gemini-3.5-flash-lite & gemini-flash-lite-latest respond in ~1s.
+            # gemini-3.8-flash is tested with a strict 3.5s timeout.
+            candidates: list[str] = []
+            if gemini_model and "llama" not in gemini_model.lower():
+                candidates.append(gemini_model)
+            for fast_alt in ["gemini-3.5-flash-lite", "gemini-flash-lite-latest", "gemini-3.8-flash"]:
+                if fast_alt not in candidates:
+                    candidates.append(fast_alt)
 
             last_error = None
             for cand in candidates:
                 try:
                     model = _genai.GenerativeModel(cand)
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            response = model.generate_content(payload)
-                            return response.text
-                        except Exception as exc:
-                            err_str = str(exc).lower()
-                            if "rate" in err_str or "429" in err_str or "quota" in err_str:
-                                wait = 2 ** (attempt + 1)
-                                logger.warning("Gemini rate-limited, retrying in %ds …", wait)
-                                time.sleep(wait)
-                                continue
-                            raise
+                    timeout_val = 3.5 if "3.8" in cand else 8.0
+                    response = model.generate_content(
+                        payload,
+                        request_options={"timeout": timeout_val}
+                    )
+                    if response and response.text:
+                        return response.text
                 except Exception as exc:
                     last_error = exc
-                    if "404" in str(exc) or "not found" in str(exc).lower():
-                        continue  # Try next available candidate model
-                    logger.error("Gemini call failed on %s: %s", cand, exc)
-                    return f"[ERROR] Gemini API error: {exc}"
+                    logger.warning("Gemini candidate %s failed (%s), trying fast fallback...", cand, exc)
+                    continue
 
-            return f"[ERROR] Gemini model error: {last_error}"
+            return f"[ERROR] Gemini API request failed: {last_error}"
 
         except Exception as exc:
             logger.error("Gemini call failed: %s", exc)
@@ -402,18 +398,28 @@ class AIAdvisor:
         str
             The AI's critique and suggestions.
         """
+        clean_metrics = {}
+        priority_keys = [
+            "total_trades", "win_rate_pct", "profit_factor", "sharpe_ratio",
+            "max_drawdown_pct", "total_return_pct", "avg_rr_achieved",
+            "won_trades", "lost_trades", "be_trades", "setup_breakdown", "trigger_breakdown"
+        ]
+        for k in priority_keys:
+            if k in metrics:
+                clean_metrics[k] = metrics[k]
+
+        if not clean_metrics:
+            clean_metrics = {k: v for k, v in metrics.items() if not isinstance(v, (list, tuple)) and k != "monthly_returns"}
+
         prompt = (
-            "I need you to critically review the following backtest results. "
-            "Identify any weaknesses, potential curve-fitting risks, and "
-            "suggest concrete improvements.\n\n"
-            "BACKTEST METRICS:\n"
-            f"{json.dumps(metrics, indent=2, default=str)}\n\n"
-            "Provide your analysis in these sections:\n"
-            "1. OVERALL ASSESSMENT\n"
-            "2. STRENGTHS\n"
-            "3. WEAKNESSES & RISKS (curve-fitting, survivorship bias, etc.)\n"
-            "4. STATISTICAL CONCERNS\n"
-            "5. RECOMMENDED IMPROVEMENTS\n"
+            "You are NEXUS-QUANT AI, a senior quantitative portfolio manager. "
+            "Critique this backtest concisely in clean markdown (under 250 words total):\n\n"
+            f"PERFORMANCE METRICS:\n{json.dumps(clean_metrics, indent=2, default=str)}\n\n"
+            "Format your answer with exactly these 4 clear sections with emojis:\n"
+            "1. 🎯 SCORE & EXECUTIVE VERDICT (Grade A-F, edge evaluation)\n"
+            "2. 🛡️ WHAT WORKED WELL (Win rate, risk:reward, setup breakdown)\n"
+            "3. ⚠️ RISKS & RED FLAGS (Max drawdown, trade sample size, curve-fitting risks)\n"
+            "4. 💡 3 CONCRETE ACTIONS (Exact parameter or execution adjustments)\n"
         )
         return self.chat(prompt)
 
