@@ -452,6 +452,26 @@ def render_sidebar():
             )
             st.session_state[f"{provider}_api_key"] = api_key
 
+        # ── Branding (Bottom Left) ──
+        st.markdown(
+            """
+            <div style="
+                margin-top: 35px;
+                padding: 12px 14px;
+                background: rgba(20, 22, 26, 0.65);
+                border: 1px solid #272A30;
+                border-radius: 10px;
+                text-align: center;
+                color: #6B7280;
+                font-size: 0.8rem;
+                letter-spacing: 0.02em;
+            ">
+                ⚡ Made by <strong style="color: #E2F952;">Abdullah (Ronin)</strong>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
         return {
             "symbol": selected,
             "interval": interval,
@@ -1311,6 +1331,22 @@ def main():
 
     with tab5:
         tab_ai_advisor(params)
+
+    # ── Bottom Right Branding ──
+    st.markdown(
+        """
+        <div style="
+            text-align: right;
+            padding: 35px 15px 15px 15px;
+            color: #6B7280;
+            font-size: 0.85rem;
+            letter-spacing: 0.03em;
+        ">
+            ⚡ Made by <strong style="color: #E2F952;">Abdullah (Ronin)</strong>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 if __name__ == "__main__":
