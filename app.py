@@ -441,6 +441,17 @@ def render_sidebar():
         ai_model = st.text_input("Model", value=model_defaults.get(provider, ""), key="ai_mdl")
         st.session_state.ai_model = ai_model
 
+        api_key = ""
+        if provider in ["gemini", "groq"]:
+            api_key = st.text_input(
+                f"{provider.capitalize()} API Key",
+                value=st.session_state.get(f"{provider}_api_key", ""),
+                type="password",
+                help="Paste your free API key here, or put it in your .env file.",
+                key=f"{provider}_key_input",
+            )
+            st.session_state[f"{provider}_api_key"] = api_key
+
         return {
             "symbol": selected,
             "interval": interval,
@@ -501,7 +512,7 @@ def render_candlestick_chart(df: pd.DataFrame, symbol: str, show_fvg: bool = Tru
                 x=df.index,
                 y=df["MA_fast"],
                 line=dict(color="#38BDF8", width=1.5),
-                name=f"MA {int(df['MA_fast'].name.split('_')[-1]) if '_' in str(df['MA_fast'].name) else 20}",
+                name="Fast MA",
                 opacity=0.85,
             ),
             row=1,
@@ -513,7 +524,7 @@ def render_candlestick_chart(df: pd.DataFrame, symbol: str, show_fvg: bool = Tru
                 x=df.index,
                 y=df["MA_slow"],
                 line=dict(color="#E2F952", width=1.5),
-                name=f"MA {int(df['MA_slow'].name.split('_')[-1]) if '_' in str(df['MA_slow'].name) else 50}",
+                name="Slow MA",
                 opacity=0.85,
             ),
             row=1,
@@ -1139,10 +1150,12 @@ def tab_ai_advisor(params: dict):
         regime_btn = st.button("🌊 Market Regime", use_container_width=True, key="ai_regime")
 
     # Initialize advisor
+    current_key = st.session_state.get(f"{st.session_state.ai_provider}_api_key") or None
     try:
         advisor = AIAdvisor(
             provider=st.session_state.ai_provider,
             model=st.session_state.ai_model or None,
+            api_key=current_key,
         )
     except Exception as e:
         st.error(f"AI Advisor initialization error: {e}")
