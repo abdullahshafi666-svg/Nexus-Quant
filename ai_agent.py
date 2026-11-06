@@ -172,8 +172,12 @@ class AIAdvisor:
     # Provider back-ends
     # ------------------------------------------------------------------
 
-    def _call_gemini(self, messages: list[dict[str, str]]) -> str:
-        """Send *messages* to the Google Gemini API and return the response text.
+    def _call_gemini(
+        self,
+        messages: list[dict[str, str]],
+        images: list[Any] | None = None,
+    ) -> str:
+        """Send *messages* and optional *images* to the Google Gemini API.
 
         Uses ``google.generativeai.GenerativeModel.generate_content``.
         Includes basic retry logic for transient / rate-limit errors.
@@ -199,10 +203,17 @@ class AIAdvisor:
                     prompt_parts.append(f"[User]\n{content}\n")
             prompt = "\n".join(prompt_parts)
 
+            # Build multimodal payload if images are provided
+            payload: list[Any] = [prompt]
+            if images:
+                for img in images:
+                    if img is not None:
+                        payload.append(img)
+
             max_retries = 3
             for attempt in range(max_retries):
                 try:
-                    response = model.generate_content(prompt)
+                    response = model.generate_content(payload)
                     return response.text
                 except Exception as exc:
                     err_str = str(exc).lower()
@@ -282,7 +293,12 @@ class AIAdvisor:
     # Public interface
     # ------------------------------------------------------------------
 
-    def chat(self, user_message: str, context: dict[str, Any] | None = None) -> str:
+    def chat(
+        self,
+        user_message: str,
+        context: dict[str, Any] | None = None,
+        images: list[Any] | None = None,
+    ) -> str:
         """Send a *user_message* to the configured AI provider and return its reply.
 
         Parameters
@@ -292,6 +308,8 @@ class AIAdvisor:
         context : dict | None
             Optional structured context (e.g. current portfolio, market data)
             that is prepended as a system-level context message.
+        images : list | None
+            Optional list of PIL Images or image bytes for vision analysis.
 
         Returns
         -------
@@ -314,6 +332,15 @@ class AIAdvisor:
                 })
 
             messages.append({"role": "user", "content": user_message})
+
+            if self.provider == "gemini":
+                return self._call_gemini(messages, images=images)
+
+            if images and self.provider != "gemini":
+                messages[-1]["content"] += (
+                    "\n\n[System Note: User attached image screenshots, but vision is "
+                    "supported by Google Gemini. Switch to Gemini in the sidebar to inspect screenshots directly.]"
+                )
 
             handler = self._dispatch.get(self.provider)
             if handler is None:

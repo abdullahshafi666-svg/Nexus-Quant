@@ -1280,8 +1280,30 @@ def tab_ai_advisor(params: dict):
                     unsafe_allow_html=True,
                 )
 
+    # ── Screenshot / Chart Image Uploader ──
+    pil_images = []
+    with st.expander("📸 Upload Screenshots or Charts for Vision AI", expanded=False):
+        uploaded_files = st.file_uploader(
+            "Upload one or multiple chart screenshots (PNG, JPG)",
+            type=["png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            key="advisor_image_uploader",
+            help="Gemini 2.0 will directly read and analyze the charts, candles, and data in your images.",
+        )
+        if uploaded_files:
+            from PIL import Image
+            cols = st.columns(min(len(uploaded_files), 4))
+            for i, f in enumerate(uploaded_files):
+                try:
+                    img = Image.open(f)
+                    pil_images.append(img)
+                    with cols[i % 4]:
+                        st.image(img, caption=f"Screenshot {i+1}", use_container_width=True)
+                except Exception as img_err:
+                    st.warning(f"Could not load image {f.name}: {img_err}")
+
     # ── Chat Input ──
-    user_input = st.chat_input("Ask NEXUS-QUANT AI anything about the markets...", key="ai_chat_input")
+    user_input = st.chat_input("Ask NEXUS-QUANT AI anything about the markets (or your uploaded screenshots)...", key="ai_chat_input")
     if user_input and advisor:
         st.session_state.ai_messages.append({"role": "user", "content": user_input})
 
@@ -1297,8 +1319,8 @@ def tab_ai_advisor(params: dict):
         if st.session_state.backtest_result:
             context["backtest_metrics"] = st.session_state.backtest_result.metrics
 
-        with st.spinner("Thinking..."):
-            response = advisor.chat(user_input, context=context)
+        with st.spinner("Analyzing text & screenshots..."):
+            response = advisor.chat(user_input, context=context, images=pil_images if pil_images else None)
             st.session_state.ai_messages.append({"role": "assistant", "content": response})
             st.rerun()
 
